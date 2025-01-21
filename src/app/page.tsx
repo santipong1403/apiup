@@ -6,6 +6,21 @@ import { FaSun, FaMoon, FaWater, FaMountain, FaPumpMedical } from "react-icons/f
 import dynamic from "next/dynamic";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
+import {
+  Chart as ChartJS,
+  LineElement,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
+import { Line } from "react-chartjs-2";
+
+// Register Chart.js components
+ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Legend);
 
 // Dynamic Import for React-Leaflet components
 const MapContainer = dynamic(() => import("react-leaflet").then((mod) => mod.MapContainer), {
@@ -15,8 +30,6 @@ const TileLayer = dynamic(() => import("react-leaflet").then((mod) => mod.TileLa
 const Marker = dynamic(() => import("react-leaflet").then((mod) => mod.Marker), { ssr: false });
 const Popup = dynamic(() => import("react-leaflet").then((mod) => mod.Popup), { ssr: false });
 
-
-// ประเภทข้อมูล
 type Station = {
   infrastruc_name: string;
   infrastruc_district: string;
@@ -26,29 +39,23 @@ type Station = {
   coordinates_long: string;
 };
 
-type StationCount = {
-  infrastruc: number;
-  weir: number;
-  pumpstation: number;
+type Rainfall = {
+  date: string;
+  value: number;
 };
 
 const InfrastrucComponent = () => {
   const [infrastruc, setInfrastruc] = useState<Station[]>([]);
-  const [stationCount, setStationCount] = useState<StationCount>({
-    infrastruc: 0,
-    weir: 0,
-    pumpstation: 0,
-  });
-  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [rainfallData, setRainfallData] = useState<Rainfall[]>([]);
+  const [startDate, setStartDate] = useState<Date | null>(new Date());
+  const [endDate, setEndDate] = useState<Date | null>(new Date());
   const [stationType, setStationType] = useState<string>("infrastruc");
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-
   const [icon, setIcon] = useState<any>(null);
 
   useEffect(() => {
-    // สร้าง Leaflet Icon เฉพาะฝั่ง Client
     if (typeof window !== "undefined") {
       import("leaflet").then((L) => {
         setIcon(
@@ -64,22 +71,11 @@ const InfrastrucComponent = () => {
     }
   }, []);
 
-  // ดึงข้อมูลจำนวนสถานี
-  const fetchStationCount = async () => {
-    try {
-      const response = await axios.get("http://localhost:3000/station_count");
-      setStationCount(response.data);
-    } catch {
-      setError("Error fetching station count");
-    }
-  };
-
-  // ดึงข้อมูลสถานี
-  const fetchInfrastruc = async (type: string) => {
+  const fetchInfrastruc = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get(`http://localhost:3000/${type}`);
+      const response = await axios.get(`http://localhost:3000/${stationType}`);
       setInfrastruc(response.data);
     } catch {
       setError("Error fetching data");
@@ -88,42 +84,52 @@ const InfrastrucComponent = () => {
     }
   };
 
-  // ใช้ useEffect
-  useEffect(() => {
-    fetchStationCount();
-  }, []);
+  const fetchRainfallData = async () => {
+    try {
+      const formattedStartDate = startDate?.toISOString().split("T")[0];
+      const formattedEndDate = endDate?.toISOString().split("T")[0];
+      const response = await axios.get("http://localhost:3000/rainfall_daily", {
+        params: { startDate: formattedStartDate, endDate: formattedEndDate },
+      });
+      setRainfallData(
+        response.data.map((item: any) => ({
+          date: item.date.split(" ")[0],
+          value: item.value,
+        }))
+      );
+    } catch (err) {
+      console.error("Error fetching rainfall data:", err);
+    }
+  };
 
   useEffect(() => {
-    fetchInfrastruc(stationType);
+    fetchInfrastruc();
   }, [stationType]);
 
-  // กรองข้อมูลตามคำค้นหา
-  const filteredInfrastruc = infrastruc.filter((item) => {
-    const searchLower = searchQuery.toLowerCase();
-    return (
-      item.infrastruc_name.toLowerCase().includes(searchLower) ||
-      item.infrastruc_district.toLowerCase().includes(searchLower) ||
-      item.infrastruc_province.toLowerCase().includes(searchLower)
-    );
-  });
+  useEffect(() => {
+    if (startDate && endDate) {
+      fetchRainfallData();
+    }
+  }, [startDate, endDate]);
 
-  // สลับธีม
+  const rainfallChartData = {
+    labels: rainfallData.map((item) => item.date),
+    datasets: [
+      {
+        label: "ปริมาณน้ำฝน (มม.)",
+        data: rainfallData.map((item) => item.value),
+        borderColor: "blue",
+        backgroundColor: "rgba(0, 0, 255, 0.2)",
+        fill: true,
+        tension: 0.1,
+      },
+    ],
+  };
+
   const toggleTheme = () => {
     setIsDarkMode((prev) => !prev);
     document.body.classList.toggle("dark", !isDarkMode);
   };
-
-  if (loading)
-    return (
-      <div className="flex justify-center items-center h-screen text-2xl font-semibold text-gray-600">
-        <span className="animate-pulse">Loading...</span>
-      </div>
-    );
-
-  if (error)
-    return (
-      <div className="text-center text-red-500 text-lg font-semibold">{error}</div>
-    );
 
   return (
     <div
@@ -145,19 +151,7 @@ const InfrastrucComponent = () => {
         </button>
       </div>
 
-      <div className="mb-6 flex space-x-4">
-        <input
-          type="text"
-          placeholder="ค้นหาสถานี..."
-          className={`p-2 border rounded-md w-1/2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition ${
-            isDarkMode ? "bg-gray-700 text-white" : "bg-white text-gray-900"
-          }`}
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-      </div>
-
-      <div className="flex justify-center mb-4 space-x-4">
+      <div className="flex justify-start mb-4 space-x-4">
         <button
           className={`flex items-center p-2 rounded-lg shadow-md ${
             stationType === "infrastruc"
@@ -193,36 +187,101 @@ const InfrastrucComponent = () => {
         </button>
       </div>
 
-      <MapContainer
-        center={[13.75, 100.5]}
-        zoom={6}
-        style={{ width: "500px", height: "500px", borderRadius: "10px", marginTop: "10px" }}
-      >
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-        {filteredInfrastruc.map((item, index) => {
-          const lat = parseFloat(item.coordinates_lat);
-          const lng = parseFloat(item.coordinates_long);
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        <MapContainer
+          center={[13.75, 100.5]}
+          zoom={6}
+          style={{ height: "500px", borderRadius: "10px" }}
+        >
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          {infrastruc.map((item, index) => {
+            const lat = parseFloat(item.coordinates_lat);
+            const lng = parseFloat(item.coordinates_long);
+            if (!isNaN(lat) && !isNaN(lng) && icon) {
+              return (
+                <Marker key={index} position={[lat, lng]} icon={icon}>
+                  <Popup>
+                    <strong>{item.infrastruc_name}</strong>
+                    <p>
+                      {item.infrastruc_district}, {item.infrastruc_province}
+                    </p>
+                    <p>ประเภท: {item.infrastruc_type}</p>
+                  </Popup>
+                </Marker>
+              );
+            }
+            return null;
+          })}
+        </MapContainer>
 
-          if (!isNaN(lat) && !isNaN(lng) && icon) {
-            return (
-              <Marker key={index} position={[lat, lng]} icon={icon}>
-                <Popup>
-                  <strong className="text-lg">{item.infrastruc_name}</strong>
-                  <div>
-                    {item.infrastruc_district}, {item.infrastruc_province}
-                  </div>
-                  <div>
-                    <strong>ประเภท:</strong> {item.infrastruc_type}
-                  </div>
-                </Popup>
-              </Marker>
-            );
-          }
-          return null;
-        })}
-      </MapContainer>
+        <div>
+          <h2 className="text-lg font-semibold mb-4">เลือกช่วงวันที่</h2>
+          <div className="flex mb-4 space-x-4">
+            <div>
+              <label>วันที่เริ่มต้น</label>
+              <DatePicker
+                selected={startDate}
+                onChange={(date) => {
+                  if (date) {
+                    setStartDate(date);
+                    if (
+                      endDate &&
+                      (endDate.getTime() - date.getTime()) / (1000 * 60 * 60 * 24) > 3
+                    ) {
+                      setEndDate(new Date(date.getTime() + 3 * 24 * 60 * 60 * 1000));
+                    }
+                  }
+                }}
+                dateFormat="yyyy-MM-dd"
+                maxDate={endDate ? new Date(endDate.getTime() + 3 * 24 * 60 * 60 * 1000) : undefined}
+                className="w-full mt-2 p-2 border rounded"
+              />
+            </div>
+            <div>
+              <label>วันที่สิ้นสุด</label>
+              <DatePicker
+                selected={endDate}
+                onChange={(date) => {
+                  if (date) {
+                    setEndDate(date);
+                    if (
+                      startDate &&
+                      (date.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24) > 3
+                    ) {
+                      setStartDate(new Date(date.getTime() - 3 * 24 * 60 * 60 * 1000));
+                    }
+                  }
+                }}
+                dateFormat="yyyy-MM-dd"
+                minDate={startDate ? new Date(startDate.getTime() - 3 * 24 * 60 * 60 * 1000) : undefined}
+                className="w-full mt-2 p-2 border rounded"
+              />
+            </div>
+          </div>
+          <h2 className="text-lg font-semibold mb-4">กราฟปริมาณน้ำฝน</h2>
+          {rainfallData.length > 0 ? (
+            <Line
+              data={rainfallChartData}
+              options={{
+                responsive: true,
+                plugins: {
+                  legend: { display: true },
+                  tooltip: { enabled: true },
+                },
+                scales: {
+                  x: { title: { display: true, text: "วันที่" } },
+                  y: { title: { display: true, text: "ปริมาณน้ำฝน (มม.)" } },
+                },
+              }}
+            />
+          ) : (
+            <p className="text-gray-500">ไม่มีข้อมูลในช่วงวันที่ที่เลือก</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
 
 export default InfrastrucComponent;
+//8;p
