@@ -284,4 +284,3 @@ const InfrastrucComponent = () => {
 };
 
 export default InfrastrucComponent;
-//8;p
